@@ -3,16 +3,31 @@ from rest_framework.response import Response
 from rest_framework import status
 from bson import ObjectId
 from datetime import datetime
+import hashlib
+import os
 from .db import get_db
 
 
 def serializar(doc):
-    """Convierte ObjectId a string para poder enviar en JSON."""
     if doc is None:
         return None
     doc['id'] = str(doc['_id'])
     del doc['_id']
     return doc
+
+
+def hash_password(password):
+    salt = os.urandom(16).hex()
+    hashed = hashlib.sha256((password + salt).encode()).hexdigest()
+    return f"{salt}:{hashed}"
+
+
+def verify_password(password, stored):
+    try:
+        salt, hashed = stored.split(':')
+        return hashlib.sha256((password + salt).encode()).hexdigest() == hashed
+    except Exception:
+        return False
 
 
 # ─────────────────────────────────────────
@@ -25,21 +40,126 @@ def health(request):
 
 
 # ─────────────────────────────────────────
-# ACTIVIDADES
+# AUTH — REGISTRO Y LOGIN
+# ─────────────────────────────────────────
+
+@api_view(['POST'])
+def registro(request):
+    db = get_db()
+    data = request.data
+    errores = {}
+
+    nombre = data.get('nombre', '').strip()
+    apellido = data.get('apellido', '').strip()
+    correo = data.get('correo', '').strip().lower()
+    clave = data.get('clave', '')
+    confirmar = data.get('confirmarClave', '')
+
+    # Validaciones
+    if not nombre:
+        errores['nombre'] = 'El nombre es obligatorio'
+    elif not nombre.replace(' ', '').isalpha():
+        errores['nombre'] = 'El nombre solo puede contener letras'
+
+    if not apellido:
+        errores['apellido'] = 'El apellido es obligatorio'
+    elif not apellido.replace(' ', '').isalpha():
+        errores['apellido'] = 'El apellido solo puede contener letras'
+
+    if not correo:
+        errores['correo'] = 'El correo es obligatorio'
+    elif '@' not in correo or '.' not in correo:
+        errores['correo'] = 'El correo no es válido'
+
+    if not clave:
+        errores['clave'] = 'La clave es obligatoria'
+    elif len(clave) < 6:
+        errores['clave'] = 'La clave debe tener al menos 6 caracteres'
+
+    if not confirmar:
+        errores['confirmarClave'] = 'Debes confirmar la clave'
+    elif clave and clave != confirmar:
+        errores['confirmarClave'] = 'Las claves no coinciden'
+
+    if errores:
+        return Response({'error': 'Datos inválidos', 'campos': errores}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Verificar si ya existe el correo
+    if db.usuarios.find_one({'correo': correo}):
+        return Response({'error': 'Datos inválidos', 'campos': {'correo': 'Este correo ya está registrado'}}, status=status.HTTP_400_BAD_REQUEST)
+
+    usuario = {
+        'nombre': nombre,
+        'apellido': apellido,
+        'correo': correo,
+        'clave': hash_password(clave),
+        'creadoEn': datetime.utcnow().isoformat(),
+    }
+
+    resultado = db.usuarios.insert_one(usuario)
+    usuario_id = str(resultado.inserted_id)
+
+    return Response({
+        'mensaje': 'Usuario registrado correctamente',
+        'usuario': {
+            'id': usuario_id,
+            'nombre': nombre,
+            'apellido': apellido,
+            'correo': correo,
+        }
+    }, status=status.HTTP_201_CREATED)
+
+
+@api_view(['POST'])
+def login(request):
+    db = get_db()
+    data = request.data
+    errores = {}
+
+    correo = data.get('correo', '').strip().lower()
+    clave = data.get('clave', '')
+
+    if not correo:
+        errores['correo'] = 'El correo es obligatorio'
+    if not clave:
+        errores['clave'] = 'La clave es obligatoria'
+
+    if errores:
+        return Response({'error': 'Datos inválidos', 'campos': errores}, status=status.HTTP_400_BAD_REQUEST)
+
+    usuario = db.usuarios.find_one({'correo': correo})
+    if not usuario or not verify_password(clave, usuario['clave']):
+        return Response({'error': 'Correo o clave incorrectos', 'campos': {}}, status=status.HTTP_401_UNAUTHORIZED)
+
+    return Response({
+        'mensaje': 'Login exitoso',
+        'usuario': {
+            'id': str(usuario['_id']),
+            'nombre': usuario['nombre'],
+            'apellido': usuario['apellido'],
+            'correo': usuario['correo'],
+        }
+    })
+
+
+# ─────────────────────────────────────────
+# ACTIVIDADES — filtradas por usuario
 # ─────────────────────────────────────────
 
 @api_view(['GET', 'POST'])
 def actividades(request):
     db = get_db()
+    usuario_id = request.headers.get('X-Usuario-Id', '')
+
+    if not usuario_id:
+        return Response({'error': 'No autenticado'}, status=status.HTTP_401_UNAUTHORIZED)
 
     if request.method == 'GET':
-        docs = list(db.actividades.find())
+        docs = list(db.actividades.find({'usuarioId': usuario_id}))
         return Response([serializar(d) for d in docs])
 
     if request.method == 'POST':
         data = request.data
-
-        # Validaciones
         errores = {}
         if not data.get('titulo', '').strip():
             errores['titulo'] = 'El título es obligatorio'
@@ -49,12 +169,10 @@ def actividades(request):
             errores['curso'] = 'El curso es obligatorio'
 
         if errores:
-            return Response(
-                {'error': 'Datos inválidos', 'campos': errores},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({'error': 'Datos inválidos', 'campos': errores}, status=status.HTTP_400_BAD_REQUEST)
 
         nueva = {
+            'usuarioId': usuario_id,
             'titulo': data['titulo'].strip(),
             'tipo': data['tipo'].strip(),
             'curso': data['curso'].strip(),
@@ -67,20 +185,20 @@ def actividades(request):
         resultado = db.actividades.insert_one(nueva)
         nueva['id'] = str(resultado.inserted_id)
         del nueva['_id']
-
         return Response(nueva, status=status.HTTP_201_CREATED)
 
 
 @api_view(['GET', 'PUT', 'DELETE'])
 def actividad_detalle(request, actividad_id):
     db = get_db()
+    usuario_id = request.headers.get('X-Usuario-Id', '')
 
     try:
         oid = ObjectId(actividad_id)
     except Exception:
         return Response({'error': 'ID inválido'}, status=status.HTTP_400_BAD_REQUEST)
 
-    doc = db.actividades.find_one({'_id': oid})
+    doc = db.actividades.find_one({'_id': oid, 'usuarioId': usuario_id})
     if not doc:
         return Response({'error': 'Actividad no encontrada'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -96,10 +214,7 @@ def actividad_detalle(request, actividad_id):
             errores['curso'] = 'El curso no puede estar vacío'
 
         if errores:
-            return Response(
-                {'error': 'Datos inválidos', 'campos': errores},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({'error': 'Datos inválidos', 'campos': errores}, status=status.HTTP_400_BAD_REQUEST)
 
         campos = {}
         for campo in ['titulo', 'tipo', 'curso', 'fechaLimite', 'horasEstimadas']:
@@ -115,20 +230,17 @@ def actividad_detalle(request, actividad_id):
         return Response({'mensaje': 'Actividad eliminada correctamente'})
 
 
-# ─────────────────────────────────────────
-# SUBTAREAS
-# ─────────────────────────────────────────
-
 @api_view(['GET', 'POST'])
 def subtareas(request, actividad_id):
     db = get_db()
+    usuario_id = request.headers.get('X-Usuario-Id', '')
 
     try:
         oid = ObjectId(actividad_id)
     except Exception:
         return Response({'error': 'ID inválido'}, status=status.HTTP_400_BAD_REQUEST)
 
-    doc = db.actividades.find_one({'_id': oid})
+    doc = db.actividades.find_one({'_id': oid, 'usuarioId': usuario_id})
     if not doc:
         return Response({'error': 'Actividad no encontrada'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -149,10 +261,7 @@ def subtareas(request, actividad_id):
             errores['horas'] = 'Las horas deben ser un número válido'
 
         if errores:
-            return Response(
-                {'error': 'Datos inválidos', 'campos': errores},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({'error': 'Datos inválidos', 'campos': errores}, status=status.HTTP_400_BAD_REQUEST)
 
         nueva_sub = {
             'id': str(ObjectId()),
@@ -164,24 +273,21 @@ def subtareas(request, actividad_id):
             'creadoEn': datetime.utcnow().isoformat(),
         }
 
-        db.actividades.update_one(
-            {'_id': oid},
-            {'$push': {'subtareas': nueva_sub}}
-        )
-
+        db.actividades.update_one({'_id': oid}, {'$push': {'subtareas': nueva_sub}})
         return Response(nueva_sub, status=status.HTTP_201_CREATED)
 
 
 @api_view(['PUT', 'DELETE'])
 def subtarea_detalle(request, actividad_id, subtarea_id):
     db = get_db()
+    usuario_id = request.headers.get('X-Usuario-Id', '')
 
     try:
         oid = ObjectId(actividad_id)
     except Exception:
         return Response({'error': 'ID de actividad inválido'}, status=status.HTTP_400_BAD_REQUEST)
 
-    doc = db.actividades.find_one({'_id': oid})
+    doc = db.actividades.find_one({'_id': oid, 'usuarioId': usuario_id})
     if not doc:
         return Response({'error': 'Actividad no encontrada'}, status=status.HTTP_404_NOT_FOUND)
 
@@ -202,10 +308,7 @@ def subtarea_detalle(request, actividad_id, subtarea_id):
                 errores['horas'] = 'Las horas deben ser un número válido'
 
         if errores:
-            return Response(
-                {'error': 'Datos inválidos', 'campos': errores},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            return Response({'error': 'Datos inválidos', 'campos': errores}, status=status.HTTP_400_BAD_REQUEST)
 
         for campo in ['nombre', 'fecha', 'horas', 'estado', 'nota']:
             if campo in data:
@@ -218,8 +321,5 @@ def subtarea_detalle(request, actividad_id, subtarea_id):
         return Response(subtarea)
 
     if request.method == 'DELETE':
-        db.actividades.update_one(
-            {'_id': oid},
-            {'$pull': {'subtareas': {'id': subtarea_id}}}
-        )
+        db.actividades.update_one({'_id': oid}, {'$pull': {'subtareas': {'id': subtarea_id}}})
         return Response({'mensaje': 'Subtarea eliminada correctamente'})

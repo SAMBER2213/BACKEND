@@ -3,6 +3,8 @@ from . import views
 
 urlpatterns = [
     path('health/', views.health),
+    path('auth/registro/', views.registro),
+    path('auth/login/', views.login),
     path('actividades/', views.actividades),
     path('actividades/<str:actividad_id>/', views.actividad_detalle),
     path('actividades/<str:actividad_id>/subtareas/', views.subtareas),
