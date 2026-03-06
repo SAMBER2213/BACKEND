@@ -10,6 +10,7 @@ DEBUG = True
 ALLOWED_HOSTS = ['*']
 
 INSTALLED_APPS = [
+    'django.contrib.contenttypes',
     'django.contrib.staticfiles',
     'rest_framework',
     'corsheaders',
@@ -40,7 +41,6 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
-# Sin base de datos SQL — usamos MongoDB directamente con pymongo
 DATABASES = {}
 
 LANGUAGE_CODE = 'es-co'
@@ -54,7 +54,6 @@ STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 CORS_ALLOW_ALL_ORIGINS = True
 
-# MongoDB
 MONGO_URI = os.environ.get(
     'MONGO_URI',
     'mongodb+srv://santiagosabogal_db_user:EIzoME6ESud6kzhm@cluster0.25ofdqk.mongodb.net/?appName=Cluster0'
