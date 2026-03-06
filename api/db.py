@@ -1,5 +1,6 @@
 from pymongo import MongoClient
 from django.conf import settings
+import ssl
 
 _client = None
 
@@ -13,5 +14,7 @@ def get_db():
             socketTimeoutMS=5000,
             maxPoolSize=1,
             minPoolSize=0,
+            tls=True,
+            tlsAllowInvalidCertificates=True,
         )
     return _client[settings.MONGO_DB_NAME]
