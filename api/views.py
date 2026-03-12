@@ -226,7 +226,7 @@ def hoy(request):
 
     return Response({
         'fecha': fecha_hoy,
-        'regla': 'Vencidas → Hoy → Próximas. Desempate: menor esfuerzo primero.',
+        'regla': 'Tus tareas se ordenan así: primero las Vencidas (la más antigua arriba), luego las de Hoy, y después las Próximas (la más cercana arriba). Si dos tareas tienen la misma fecha, aparece primero la de menor esfuerzo.',
         'carga_hoy_horas': round(carga_hoy, 2),
         'vencidas': vencidas,
         'hoy': para_hoy,
