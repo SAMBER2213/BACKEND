@@ -2,10 +2,12 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from bson import ObjectId
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import hashlib
 import os
 from .db import get_db
+
+ZONA_CO = timezone(timedelta(hours=-5))
 
 
 def serializar(doc):
@@ -177,7 +179,7 @@ def hoy(request):
     if not usuario_id:
         return Response({'error': 'No autenticado'}, status=status.HTTP_401_UNAUTHORIZED)
 
-    ahora = datetime.utcnow()
+    ahora = datetime.now(ZONA_CO)
     fecha_hoy = ahora.strftime('%Y-%m-%d')
     hora_actual = ahora.strftime('%H:%M')
 
