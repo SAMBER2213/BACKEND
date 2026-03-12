@@ -146,6 +146,86 @@ def login(request):
 # ACTIVIDADES — filtradas por usuario
 # ─────────────────────────────────────────
 
+@api_view(['GET'])
+def hoy(request):
+    """
+    GET /api/hoy/
+    Devuelve las subtareas pendientes del usuario agrupadas en tres secciones:
+      - vencidas: fecha < hoy, ordenadas por fecha ASC (más antigua primero)
+      - hoy:      fecha == hoy, ordenadas por horas ASC (menor esfuerzo primero)
+      - proximas: fecha > hoy o sin fecha, ordenadas por fecha ASC (sin fecha al final)
+
+    Headers requeridos:
+      X-Usuario-Id: <id del usuario autenticado>
+
+    Response 200:
+    {
+      "fecha": "2025-06-10",
+      "regla": "Vencidas → Hoy → Próximas. Desempate: menor esfuerzo primero.",
+      "carga_hoy_horas": 3.5,
+      "vencidas":  [ { subtarea }, ... ],
+      "hoy":       [ { subtarea }, ... ],
+      "proximas":  [ { subtarea }, ... ]
+    }
+
+    Cada subtarea incluye los campos originales más:
+      actividadId, actividadTitulo, actividadCurso
+    """
+    db = get_db()
+    usuario_id = request.headers.get('X-Usuario-Id', '')
+
+    if not usuario_id:
+        return Response({'error': 'No autenticado'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    fecha_hoy = datetime.utcnow().strftime('%Y-%m-%d')
+
+    actividades_docs = list(db.actividades.find({'usuarioId': usuario_id}))
+
+    vencidas, para_hoy, proximas = [], [], []
+
+    for act in actividades_docs:
+        act_id = str(act['_id'])
+        act_titulo = act.get('titulo', '')
+        act_curso = act.get('curso', '')
+
+        for sub in act.get('subtareas', []):
+            if sub.get('estado') == 'hecho':
+                continue
+
+            enriquecida = {
+                **sub,
+                'actividadId': act_id,
+                'actividadTitulo': act_titulo,
+                'actividadCurso': act_curso,
+            }
+
+            fecha_sub = sub.get('fecha', '')
+
+            if not fecha_sub:
+                proximas.append(enriquecida)
+            elif fecha_sub < fecha_hoy:
+                vencidas.append(enriquecida)
+            elif fecha_sub == fecha_hoy:
+                para_hoy.append(enriquecida)
+            else:
+                proximas.append(enriquecida)
+
+    vencidas.sort(key=lambda s: s.get('fecha', ''))
+    para_hoy.sort(key=lambda s: float(s.get('horas', 0)))
+    proximas.sort(key=lambda s: (s.get('fecha', '') == '', s.get('fecha', '')))
+
+    carga_hoy = sum(float(s.get('horas', 0)) for s in para_hoy)
+
+    return Response({
+        'fecha': fecha_hoy,
+        'regla': 'Vencidas → Hoy → Próximas. Desempate: menor esfuerzo primero.',
+        'carga_hoy_horas': round(carga_hoy, 2),
+        'vencidas': vencidas,
+        'hoy': para_hoy,
+        'proximas': proximas,
+    })
+
+
 @api_view(['GET', 'POST'])
 def actividades(request):
     db = get_db()
