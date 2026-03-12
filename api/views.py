@@ -177,7 +177,9 @@ def hoy(request):
     if not usuario_id:
         return Response({'error': 'No autenticado'}, status=status.HTTP_401_UNAUTHORIZED)
 
-    fecha_hoy = datetime.utcnow().strftime('%Y-%m-%d')
+    ahora = datetime.utcnow()
+    fecha_hoy = ahora.strftime('%Y-%m-%d')
+    hora_actual = ahora.strftime('%H:%M')
 
     actividades_docs = list(db.actividades.find({'usuarioId': usuario_id}))
 
@@ -200,13 +202,17 @@ def hoy(request):
             }
 
             fecha_sub = sub.get('fecha', '')
+            hora_sub = sub.get('hora', '')
 
             if not fecha_sub:
                 proximas.append(enriquecida)
             elif fecha_sub < fecha_hoy:
                 vencidas.append(enriquecida)
             elif fecha_sub == fecha_hoy:
-                para_hoy.append(enriquecida)
+                if hora_sub and hora_sub < hora_actual:
+                    vencidas.append(enriquecida)
+                else:
+                    para_hoy.append(enriquecida)
             else:
                 proximas.append(enriquecida)
 
@@ -347,6 +353,7 @@ def subtareas(request, actividad_id):
             'id': str(ObjectId()),
             'nombre': data['nombre'].strip(),
             'fecha': data.get('fecha', ''),
+            'hora': data.get('hora', ''),
             'horas': horas,
             'estado': 'pendiente',
             'nota': '',
@@ -390,7 +397,7 @@ def subtarea_detalle(request, actividad_id, subtarea_id):
         if errores:
             return Response({'error': 'Datos inválidos', 'campos': errores}, status=status.HTTP_400_BAD_REQUEST)
 
-        for campo in ['nombre', 'fecha', 'horas', 'estado', 'nota']:
+        for campo in ['nombre', 'fecha', 'hora', 'horas', 'estado', 'nota']:
             if campo in data:
                 subtarea[campo] = data[campo]
 
